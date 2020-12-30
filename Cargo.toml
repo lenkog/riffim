@@ -1,0 +1,11 @@
+[package]
+name = "riffim"
+version = "0.1.0"
+authors = ["Lenko Grigorov <bnlsw@banica.org>"]
+edition = "2018"
+
+[dependencies]
+fltk = {version = "0.12", features = ["no-pango", "system-libjpeg"] }
+lcms2-sys = "3.1"
+libc = "0.2"
+mozjpeg-sys = { version = "0.10" }
