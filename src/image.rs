@@ -3,6 +3,9 @@
  * This work is licensed under the 3-clause BSD License.
  * https://opensource.org/licenses/BSD-3-Clause
  */
+use std::sync::{Arc, Mutex};
+
+pub type SharedImage = Arc<Mutex<Image>>;
 
 pub struct Image {
     pub data: Vec<u8>,

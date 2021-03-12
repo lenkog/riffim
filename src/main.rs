@@ -9,6 +9,7 @@ mod error;
 mod files;
 mod image;
 mod jpeg;
+mod mt;
 mod ui;
 
 use fltk::{app::*, button::*, window::*};
@@ -34,6 +35,9 @@ fn main() {
         .iter()
         .position(|x| x == path.to_str().unwrap())
         .unwrap_or(0);
+
+    // init multithreading support in FLTK
+    fltk::app::lock().unwrap();
 
     // screen size is adjusted in the fltk module - so we need to revert
     const SCREEN_SIZE_COEF: f64 = 0.96;

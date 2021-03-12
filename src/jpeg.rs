@@ -12,6 +12,7 @@ use std::time::SystemTime;
 
 use super::error::SimpleError;
 use super::image::Image;
+use super::mt::CancelMonitor;
 
 const JPEG_MARKER_MAX_LEN: usize = 0xFFFF;
 const ICC_MARKER: u8 = mozjpeg_sys::jpeg_marker::APP0 as u8 + 2;
@@ -50,7 +51,7 @@ fn load_profile(
     }
 }
 
-pub fn load_jpeg(file: &str) -> Result<Image, Box<dyn Error>> {
+pub fn load_jpeg(file: &str, cancel: CancelMonitor) -> Result<Image, Box<dyn Error>> {
     let start = SystemTime::now();
 
     let mut result: Image = Image::new();
@@ -87,18 +88,22 @@ pub fn load_jpeg(file: &str) -> Result<Image, Box<dyn Error>> {
     let row_len = (result.width * result.pixel_components) as usize;
     let mut buffer = vec![0; result.height as usize * row_len];
 
-    while cinfo.output_scanline < cinfo.output_height {
+    while cinfo.output_scanline < cinfo.output_height && !cancel.is_canceled() {
         let offset = cinfo.output_scanline as usize * row_len;
         let mut jsamp_array = [buffer[offset..].as_mut_ptr()];
         unsafe { jpeg_read_scanlines(&mut cinfo, jsamp_array.as_mut_ptr(), 1) };
     }
-    unsafe { jpeg_finish_decompress(&mut cinfo) };
+    if !cancel.is_canceled() {
+        unsafe { jpeg_finish_decompress(&mut cinfo) };
+    }
     unsafe { jpeg_destroy_decompress(&mut cinfo) };
     unsafe { libc::fclose(fh) };
 
-    result.data = buffer;
+    if cancel.is_canceled() {
+        return Err(SimpleError::to_box("JPEG loading cancelled"));
+    }
 
-    apply_icc(&mut result);
+    result.data = buffer;
 
     if cfg!(debug_assertions) {
         println!(
@@ -110,7 +115,7 @@ pub fn load_jpeg(file: &str) -> Result<Image, Box<dyn Error>> {
     Ok(result)
 }
 
-pub fn apply_icc(img:&mut Image) {
+pub fn apply_icc(img: &mut Image, cancel: CancelMonitor) {
     if img.icc.is_some() {
         let start = SystemTime::now();
 
@@ -132,14 +137,40 @@ pub fn apply_icc(img:&mut Image) {
         unsafe { cmsCloseProfile(profile_out) };
         unsafe { cmsCloseProfile(profile_in) };
 
-        unsafe {
-            cmsDoTransform(
-                transform,
-                img.data.as_mut_ptr() as *mut c_void,
-                img.data.as_mut_ptr() as *mut c_void,
-                img.width * img.height,
-            )
-        };
+        const PIXELS_PER_ITERATION: u32 = 1 << 20;
+        let pixels = img.width * img.height;
+        let iterations = pixels / PIXELS_PER_ITERATION;
+        let remainder = pixels % PIXELS_PER_ITERATION;
+        for i in 0..iterations as usize {
+            if cancel.is_canceled() {
+                unsafe { cmsDeleteTransform(transform) };
+                return;
+            }
+            let start_idx = i * (PIXELS_PER_ITERATION * img.pixel_components) as usize;
+            unsafe {
+                cmsDoTransform(
+                    transform,
+                    img.data[start_idx..].as_mut_ptr() as *mut c_void,
+                    img.data[start_idx..].as_mut_ptr() as *mut c_void,
+                    PIXELS_PER_ITERATION,
+                )
+            };
+        }
+        if cancel.is_canceled() {
+            unsafe { cmsDeleteTransform(transform) };
+            return;
+        }
+        if remainder > 0 {
+            let start_idx = (iterations * PIXELS_PER_ITERATION * img.pixel_components) as usize;
+            unsafe {
+                cmsDoTransform(
+                    transform,
+                    img.data[start_idx..].as_mut_ptr() as *mut c_void,
+                    img.data[start_idx..].as_mut_ptr() as *mut c_void,
+                    remainder,
+                )
+            };
+        }
         unsafe { cmsDeleteTransform(transform) };
 
         if cfg!(debug_assertions) {

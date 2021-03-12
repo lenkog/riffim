@@ -5,29 +5,37 @@
  */
 
 use fltk::{button::*, frame::*, image::RgbImage};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
-use super::image::Image;
+use super::image::{Image, SharedImage};
+use super::mt::MutShared;
+
+pub type SharedImageDisplay = Arc<Mutex<ImageDisplay>>;
 
 pub struct ImageDisplay {
     frame: Frame,
     // need to keep a ref to the displayed image because RgbImage doesn't
-    image_ref: Rc<Image>,
+    image_ref: SharedImage,
 }
 
 impl ImageDisplay {
     pub fn new(width: i32, height: i32) -> ImageDisplay {
         ImageDisplay {
             frame: Frame::new(0, 0, width, height, ""),
-            image_ref: Rc::new(Image::new()),
+            image_ref: Image::new().to_mut_shared(),
         }
     }
 
-    pub fn show(&mut self, image: Rc<Image>) {
-        self.image_ref = image.clone();
+    pub fn show(&mut self, shared_image: SharedImage) {
+        self.image_ref = shared_image.clone();
+        self.updated();
+    }
+
+    pub fn updated(&mut self) {
+        let image = self.image_ref.lock().unwrap();
         let mut fltk_image = unsafe {
             RgbImage::from_data(
-                &self.image_ref.data,
+                &image.data,
                 image.width,
                 image.height,
                 image.pixel_components,
